@@ -1,7 +1,15 @@
 // Import packages
-import express from "express"; 
-import ffmpeg from "fluent-ffmpeg"; // Command line interface tool (only lets us use it outside of cli -- tool must be installed separately)
+import express, { Request, Response } from "express";
+import { 
+    uploadProcessedVideo,
+    downloadRawVideo,
+    deleteRawVideo,
+    deleteProcessedVideo,
+    convertVideo,
+    setupDirectories
+  } from './storage';
 
+setupDirectories();
 
 const app = express(); // Initialize express application
 app.use(express.json()); // Recieves the standardizes JSON request
@@ -14,33 +22,51 @@ app.use(express.json()); // Recieves the standardizes JSON request
 // });
 
 // POST request
-app.post("/process-video", (req, res) => {
-    // Get path of the input video file from the request body
-    const inputFilePath = req.body.inputFilePath;
-    const outputFilePath = req.body.outputFilePath;
-
-    // Error handling for empty file paths
-    if (!inputFilePath || !outputFilePath) {
-        res.status(400).send("Bad Request: Missing file path.");
+// Invoked automatically (Cloud Pub/Sub message queue) --> not sent by any user
+app.post("/process-video", async (req, res) => {
+    // Get the bucket and filename from Cloud Pub/Sub message
+    let data;
+    try {
+        // Parse the message data
+        const message = Buffer.from(req.body.message.data, 'base64').toString('utf8');
+        data = JSON.parse(message);
+        // Ensure the name (or filename) exists
+        if (!data.name) {
+            throw new Error('Invalid message payload recieved.');
+        }
+    } catch (error) {
+        // No filename exists
+        console.error(error);
+        return res.status(400).send('Bad Request: missing filename.');
     }
 
-    // Convert video to 360p
-    ffmpeg(inputFilePath)
-        // -vf = video file
-        // Scale to 360p
-        .outputOptions("-vf", "scale=-1:360")
-        // When process completes (end tag)
-        .on("end", () => {
-            // Asynchronous function, so must wait until the end
-            return res.status(200).send("Video processing finished successfully.") // Code 200 - successful upload
-        })
-        // Error
-        .on("error", (err) => {
-            console.log(`An error occurred: ${err.message}`)
-            res.status(500).send(`Internal Server Error: ${err.message}`) // Error code 500 - interal error
-        })
-        // Save output file with path
-        .save(outputFilePath);
+    const inputFileName = data.name;
+    const outputFileName = `processed-${inputFileName}`;
+
+    // Download the raw video from Cloud Storage
+    await downloadRawVideo(inputFileName)
+
+    // Conver the video to 360p
+    try {
+        await convertVideo(inputFileName, outputFileName)
+    } catch (err) {
+        // Groups functions into a promis that can be await together
+        await Promise.all([
+            deleteRawVideo(inputFileName),
+            deleteProcessedVideo(outputFileName)
+        ]) 
+        console.error(err);
+        return res.status(500).send('Internal Server Error: video processing failed.')
+    }
+
+    // Upload the processed video to Cloud Storage
+    await uploadProcessedVideo(outputFileName);
+    await Promise.all([
+        deleteRawVideo(inputFileName),
+        deleteProcessedVideo(outputFileName)
+    ]) 
+
+    return res.status(200).send('Processing finished sucessfully.');
 });
 
 const port = process.env.PORT || 3000; // Port can be provided as environment variable upon runtime. Set to 3000 as default when it's undefined.
