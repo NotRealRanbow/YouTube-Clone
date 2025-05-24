@@ -1,5 +1,5 @@
 // Import packages
-import express, { Request, Response } from "express";
+import express, { Request, Response, Application } from "express";
 import { 
     uploadProcessedVideo,
     downloadRawVideo,
@@ -11,7 +11,7 @@ import {
 
 setupDirectories();
 
-const app = express(); // Initialize express application
+const app: Application = express(); // Initialize express application
 app.use(express.json()); // Recieves the standardizes JSON request
 
 // const port = 3000; // Open to port 3000 (default for express applications)
@@ -23,7 +23,12 @@ app.use(express.json()); // Recieves the standardizes JSON request
 
 // POST request
 // Invoked automatically (Cloud Pub/Sub message queue) --> not sent by any user
-app.post("/process-video", async (req, res) => {
+app.post("/manage-video", (req, res) => {
+
+})
+
+
+app.post("/process-video", async (req: Request, res: Response): Promise<Response> => {
     // Get the bucket and filename from Cloud Pub/Sub message
     let data;
     try {
@@ -50,7 +55,7 @@ app.post("/process-video", async (req, res) => {
     try {
         await convertVideo(inputFileName, outputFileName)
     } catch (err) {
-        // Groups functions into a promis that can be await together
+        // Groups functions into a promise that can be await together
         await Promise.all([
             deleteRawVideo(inputFileName),
             deleteProcessedVideo(outputFileName)
@@ -66,7 +71,7 @@ app.post("/process-video", async (req, res) => {
         deleteProcessedVideo(outputFileName)
     ]) 
 
-    return res.status(200).send('Processing finished sucessfully.');
+    return res.status(200).send('Processing finished successfully.');
 });
 
 const port = process.env.PORT || 3000; // Port can be provided as environment variable upon runtime. Set to 3000 as default when it's undefined.
